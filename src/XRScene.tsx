@@ -5,7 +5,7 @@ import { useThree, useFrame } from "@react-three/fiber"
 import { ContactShadows, Text, Billboard } from "@react-three/drei"
 
 // =============================
-// Interakcja klawiszem "E"
+// Interakcja klawiszem "E" (pulse)
 // =============================
 let __ePulse = false
 let __listenerAttached = false
@@ -16,17 +16,10 @@ function InteractKeyListener() {
     const onDown = (e: KeyboardEvent) => {
       if (e.key.toLowerCase() === "e" && !e.repeat) __ePulse = true
     }
-    const onUp = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e") {
-        // nic – trzymanie nie daje dodatkowych akcji, działamy na PULSE
-      }
-    }
     window.addEventListener("keydown", onDown)
-    window.addEventListener("keyup", onUp)
     __listenerAttached = true
     return () => {
       window.removeEventListener("keydown", onDown)
-      window.removeEventListener("keyup", onUp)
       __listenerAttached = false
     }
   }, [])
@@ -48,26 +41,59 @@ const ROOM = { w: 12, d: 12, h: 3.0 }
 const WALL_T = 0.2
 
 // =============================
-// Oświetlenie
+// Oświetlenie (globalne) + lampy przemysłowe
 // =============================
+function IndustrialLamp({ position = [0, ROOM.h - 0.2, 0] as [number, number, number], intensity = 0.95 }) {
+  return (
+    <group position={position}>
+      {/* prosty klosz */}
+      <mesh position={[0, -0.05, 0]} castShadow>
+        <cylinderGeometry args={[0.25, 0.35, 0.2, 16]} />
+        <meshStandardMaterial color={"#3a3f46"} metalness={0.3} roughness={0.6} />
+      </mesh>
+      {/* żarówka */}
+      <mesh position={[0, -0.18, 0]}>
+        <sphereGeometry args={[0.08, 16, 16]} />
+        <meshStandardMaterial emissive={"#fff8d5"} emissiveIntensity={1.3} color={"#444"} />
+      </mesh>
+      {/* przewód */}
+      <mesh position={[0, 0.2, 0]}>
+        <cylinderGeometry args={[0.02, 0.02, 0.4, 8]} />
+        <meshStandardMaterial color={"#202327"} />
+      </mesh>
+      {/* światło */}
+      <pointLight intensity={intensity} distance={8} />
+    </group>
+  )
+}
+
 function Lights() {
   const dir = useRef<THREE.DirectionalLight>(null)
   useFrame(({ clock }) => {
     if (!dir.current) return
-    dir.current.intensity = 0.9 + Math.sin(clock.elapsedTime * 2.1) * 0.03
+    dir.current.intensity = 0.8 + Math.sin(clock.elapsedTime * 1.7) * 0.03
   })
   return (
     <>
-      <ambientLight intensity={0.35} />
-      <hemisphereLight intensity={0.15} groundColor={"#1a1a1a"} />
-      <directionalLight ref={dir} castShadow position={[4, 6, 2]} intensity={0.9} shadow-mapSize={1024} />
-      <pointLight position={[0, ROOM.h - 0.3, 0]} intensity={0.6} distance={8} />
+      <ambientLight intensity={0.3} />
+      <hemisphereLight intensity={0.12} groundColor={"#1a1a1a"} />
+      <directionalLight ref={dir} castShadow position={[4, 6, 2]} intensity={0.8} shadow-mapSize={1024} />
+      {/* Lampy – RoomA */}
+      <IndustrialLamp position={[-3, ROOM.h - 0.1, -1.5]} intensity={0.9} />
+      <IndustrialLamp position={[ 3, ROOM.h - 0.1,  1.5]} intensity={0.85} />
+      {/* nad drzwiami (RoomA strona) */}
+      <IndustrialLamp position={[0, ROOM.h - 0.1, -ROOM.d/2 + 0.4]} intensity={1.25} />
+      {/* RoomB */}
+      <IndustrialLamp position={[-2.5, ROOM.h - 0.1, -ROOM.d - 2]} intensity={0.9} />
+      <IndustrialLamp position={[ 2.5, ROOM.h - 0.1, -ROOM.d + 1.5]} intensity={0.85} />
+      {/* Dodatkowe światło punktowe podkreślające drzwi */}
+      <pointLight position={[0, ROOM.h - 0.2, -ROOM.d/2 + 0.6]} intensity={1.2} distance={10} />
     </>
   )
 }
 
 // =============================
-// Podłoga
+// Podłoga i sufit
 // =============================
 function Ground() {
   return (
@@ -78,9 +104,6 @@ function Ground() {
   )
 }
 
-// =============================
-// Prosty sufit
-// =============================
 function Ceiling() {
   return (
     <mesh position={[0, ROOM.h, 0]} rotation={[Math.PI / 2, 0, 0]} receiveShadow>
@@ -91,7 +114,7 @@ function Ceiling() {
 }
 
 // =============================
-// Ściany z opcjonalnym otworem na drzwi
+// Ściany z PRAWDZIWYM otworem (collidery tylko na słupkach i nadprożu)
 // =============================
 type DoorWallSide = "north" | "south" | "none"
 function WallsWithDoorway({ orientation = "none" as DoorWallSide }) {
@@ -102,7 +125,7 @@ function WallsWithDoorway({ orientation = "none" as DoorWallSide }) {
   const doorH = 2.2
 
   const FullWall = ({ z }: { z: number }) => (
-    <mesh position={[0, h / 2, z]} castShadow>
+    <mesh position={[0, h / 2, z]} castShadow userData={{ collider: true }}>
       <boxGeometry args={[w, h, t]} />
       <primitive object={mat} attach="material" />
     </mesh>
@@ -113,18 +136,22 @@ function WallsWithDoorway({ orientation = "none" as DoorWallSide }) {
     const topH = h - doorH
     return (
       <group>
-        <mesh position={[-(doorW / 2 + segW / 2), h / 2, z]} castShadow>
+        {/* Lewy słupek – collider */}
+        <mesh position={[-(doorW / 2 + segW / 2), h / 2, z]} castShadow userData={{ collider: true }}>
           <boxGeometry args={[segW, h, t]} />
           <primitive object={mat} attach="material" />
         </mesh>
-        <mesh position={[doorW / 2 + segW / 2, h / 2, z]} castShadow>
+        {/* Prawy słupek – collider */}
+        <mesh position={[doorW / 2 + segW / 2, h / 2, z]} castShadow userData={{ collider: true }}>
           <boxGeometry args={[segW, h, t]} />
           <primitive object={mat} attach="material" />
         </mesh>
-        <mesh position={[0, doorH + (topH / 2), z]} castShadow>
+        {/* Nadproże – collider */}
+        <mesh position={[0, doorH + (topH / 2), z]} castShadow userData={{ collider: true }}>
           <boxGeometry args={[doorW, topH, t]} />
           <primitive object={mat} attach="material" />
         </mesh>
+        {/* Brak środkowego segmentu = prawdziwy otwór bez kolizji */}
       </group>
     )
   }
@@ -136,11 +163,11 @@ function WallsWithDoorway({ orientation = "none" as DoorWallSide }) {
     <group>
       <North />
       <South />
-      <mesh position={[w / 2, h / 2, 0]} rotation={[0, Math.PI / 2, 0]} castShadow>
+      <mesh position={[w / 2, h / 2, 0]} rotation={[0, Math.PI / 2, 0]} castShadow userData={{ collider: true }}>
         <boxGeometry args={[d, h, t]} />
         <primitive object={mat} attach="material" />
       </mesh>
-      <mesh position={[-w / 2, h / 2, 0]} rotation={[0, Math.PI / 2, 0]} castShadow>
+      <mesh position={[-w / 2, h / 2, 0]} rotation={[0, Math.PI / 2, 0]} castShadow userData={{ collider: true }}>
         <boxGeometry args={[d, h, t]} />
         <primitive object={mat} attach="material" />
       </mesh>
@@ -154,13 +181,13 @@ function WallsWithDoorway({ orientation = "none" as DoorWallSide }) {
 function Table({ position = [0, 0.8, 0] as [number, number, number] }) {
   return (
     <group position={position}>
-      <mesh castShadow position={[0, -0.05, 0]}>
+      <mesh castShadow position={[0, -0.05, 0]} userData={{ collider: true }}>
         <boxGeometry args={[1.2, 0.1, 0.7]} />
         <meshStandardMaterial color={"#404853"} roughness={0.85} />
       </mesh>
       {[-0.5, 0.5].map((x) =>
         [-0.25, 0.25].map((z) => (
-          <mesh key={`${x}-${z}`} position={[x, -0.45, z]} castShadow>
+          <mesh key={`${x}-${z}`} position={[x, -0.45, z]} castShadow userData={{ collider: true }}>
             <boxGeometry args={[0.08, 0.8, 0.08]} />
             <meshStandardMaterial color={"#3a414b"} />
           </mesh>
@@ -171,7 +198,28 @@ function Table({ position = [0, 0.8, 0] as [number, number, number] }) {
 }
 
 // =============================
-// Pojedyncza kostka sterowana klawiszem E
+// Plakat-instrukcja (statyczny, bez obracania)
+// =============================
+function InstructionPoster({ position = [ -ROOM.w/2 + 0.02, 1.35, -1.5] as [number, number, number] }) {
+  return (
+    <group position={position}>
+      {/* tablica */}
+      <mesh rotation={[0, Math.PI/2, 0]} castShadow userData={{ collider: true }}>
+        <planeGeometry args={[1.8, 1.1]} />
+        <meshStandardMaterial color={"#15181d"} roughness={0.9} />
+      </mesh>
+      {/* tekst – statyczny, bez billboardu */}
+      <group rotation={[0, Math.PI/2, 0]} position={[0.01, 0, 0.03]}>
+        <Text fontSize={0.12} maxWidth={1.6} lineHeight={1.2} color={"#e6edf3"} anchorX="center" anchorY="middle">
+          {`INSTRUKCJA:\nPodejdź blisko żółtej kostki.\nNaciśnij „E”, żeby aktywować.\nAktywuj 3/3, aby otworzyć drzwi.`}
+        </Text>
+      </group>
+    </group>
+  )
+}
+
+// =============================
+// Pojedyncza kostka sterowana „E” (Billboard – może zostać)
 // =============================
 function PuzzleCube({
   index,
@@ -203,7 +251,7 @@ function PuzzleCube({
 
   return (
     <group>
-      <mesh ref={cubeRef} position={position} castShadow>
+      <mesh ref={cubeRef} position={position} castShadow userData={{ collider: true }}>
         <boxGeometry args={[0.5, 0.5, 0.5]} />
         <meshStandardMaterial color={solved ? "limegreen" : "gold"} />
       </mesh>
@@ -219,10 +267,14 @@ function PuzzleCube({
 }
 
 // =============================
-// Drzwi z zawiasem + licznik postępu
+// Drzwi z zawiasem + licznik postępu (statyczny tekst)
+// (Naprawa: korzystamy z refa, żeby useFrame widział aktualny "open")
 // =============================
 function HingedDoor({ open, progress }: { open: boolean; progress: string }) {
   const pivot = useRef<THREE.Group>(null)
+  const openRef = useRef(open)
+  useEffect(() => { openRef.current = open }, [open])
+
   const doorW = 2.2
   const doorH = 2.2
   const zAtWall = -ROOM.d / 2 + WALL_T / 2 // płaszczyzna ściany północnej RoomA
@@ -230,7 +282,7 @@ function HingedDoor({ open, progress }: { open: boolean; progress: string }) {
   useFrame((_, dt) => {
     const t = pivot.current
     if (!t) return
-    const target = open ? Math.PI / 2 : 0
+    const target = openRef.current ? Math.PI * 0.58 : 0 // ~105°
     t.rotation.y = THREE.MathUtils.lerp(t.rotation.y, target, 1 - Math.pow(0.0001, dt * 2.2))
   })
 
@@ -250,12 +302,12 @@ function HingedDoor({ open, progress }: { open: boolean; progress: string }) {
         </mesh>
       </group>
 
-      {/* licznik postępu */}
-      <Billboard position={[0, doorH + 0.2, zAtWall + 0.04]}>
-        <Text fontSize={0.22} color={open ? "#2ecc71" : "#e0e6ef"} anchorX="center" anchorY="middle">
+      {/* licznik postępu – statyczny (bez billboardu), skierowany do RoomA */}
+      <group position={[0, doorH + 0.25, zAtWall + 0.04]} rotation={[0, Math.PI, 0]}>
+        <Text fontSize={0.24} color={open ? "#2ecc71" : "#e0e6ef"} anchorX="center" anchorY="middle">
           {progress}
         </Text>
-      </Billboard>
+      </group>
     </group>
   )
 }
@@ -295,6 +347,8 @@ export default function XRScene() {
         <Ground />
         <WallsWithDoorway orientation="north" />
         <Ceiling />
+
+        <InstructionPoster position={[-ROOM.w/2 + 0.02, 1.35, -1.5]} />
 
         <Table position={[-2.2, 0.8, -0.5]} />
         <Table position={[2.4, 0.8, 1.4]} />
