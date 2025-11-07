@@ -1,4 +1,3 @@
-
 import { useEffect, useRef } from "react"
 import { useThree, useFrame } from "@react-three/fiber"
 import { PointerLockControls } from "@react-three/drei"
@@ -12,7 +11,7 @@ export default function DesktopControls() {
 
   const HALF_W = 12 / 2
   const HALF_D = 12 / 2
-  const ROOM_B_SHIFT = 12
+  const ROOM_B_SHIFT = 36
   const R = 0.30
   const PLAYER_MAX_Y_MARGIN = 0.2
 
@@ -39,17 +38,14 @@ export default function DesktopControls() {
 
     const next = camera.position.clone().add(vel.current)
 
-    // RoomA + RoomB bounds
     const zMin = -HALF_D - ROOM_B_SHIFT + R
     const zMax =  HALF_D - R
     next.x = THREE.MathUtils.clamp(next.x, -HALF_W + R, HALF_W - R)
     next.z = THREE.MathUtils.clamp(next.z, zMin, zMax)
 
-    // Player capsule height
     const pMinY = 0.0
     const pMaxY = camera.position.y + PLAYER_MAX_Y_MARGIN
 
-    // Fresh collider traversal every frame (avoids stale refs when React remounts)
     scene.updateMatrixWorld(true)
     const box = new THREE.Box3()
 

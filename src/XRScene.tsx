@@ -1,31 +1,43 @@
-
 import * as THREE from "three"
 import { useEffect, useRef, useState } from "react"
 import { useThree, useFrame } from "@react-three/fiber"
 import { ContactShadows } from "@react-three/drei"
 import Room1, { ROOM } from "./Room1"
 import Room2 from "./Room2"
+import Room3 from "./Room3"
+import Room4 from "./Room4"
 
-// ============ Interakcja E ============
-let __ePulse = false
+// ============ Klawisz E – stabilna obsługa bez buforowania ============
+let __eDown = false           // czy E jest wciśnięte
+let __eEdgeFrame = -1         // numer klatki, w której nastąpiło "keydown"
+let __frameNo = 0             // globalny licznik klatek
 let __listenerAttached = false
 
 function InteractKeyListener() {
   useEffect(() => {
     if (__listenerAttached) return
     const onDown = (e: KeyboardEvent) => {
-      if (e.key.toLowerCase() === "e" && !e.repeat) __ePulse = true
+      if (e.key.toLowerCase() === "e" && !e.repeat) {
+        if (!__eDown) { __eDown = true; __eEdgeFrame = __frameNo }
+      }
+    }
+    const onUp = (e: KeyboardEvent) => {
+      if (e.key.toLowerCase() === "e") __eDown = false
     }
     window.addEventListener("keydown", onDown)
+    window.addEventListener("keyup", onUp)
     __listenerAttached = true
     return () => {
       window.removeEventListener("keydown", onDown)
+      window.removeEventListener("keyup", onUp)
       __listenerAttached = false
     }
   }, [])
   return null
 }
-function consumeE() { if (__ePulse) { __ePulse = false; return true } return false }
+// consumeE zwraca true WYŁĄCZNIE w klatce, w której nastąpił keydown.
+// Jeśli podejdziesz do kostki już po wciśnięciu E, nic się nie stanie.
+function consumeE() { return __eEdgeFrame === __frameNo }
 
 function IndustrialLamp({ position = [0, ROOM.h - 0.2, 0] as [number, number, number], intensity = 0.95 }) {
   return (
@@ -48,7 +60,7 @@ function IndustrialLamp({ position = [0, ROOM.h - 0.2, 0] as [number, number, nu
 }
 
 function Lights() {
-  const dir = useRef<THREE.DirectionalLight>(null)
+  const dir = useRef<THREE.DirectionalLight>(null!)
   useFrame(({ clock }) => {
     if (!dir.current) return
     dir.current.intensity = 0.8 + Math.sin(clock.elapsedTime * 1.7) * 0.03
@@ -58,21 +70,25 @@ function Lights() {
       <ambientLight intensity={0.3} />
       <hemisphereLight intensity={0.12} groundColor={"#1a1a1a"} />
       <directionalLight ref={dir} castShadow position={[4, 6, 2]} intensity={0.8} shadow-mapSize={1024} />
-      {/* Lampy – RoomA */}
+      {/* RoomA */}
       <IndustrialLamp position={[-3, ROOM.h - 0.1, -1.5]} intensity={0.9} />
       <IndustrialLamp position={[ 3, ROOM.h - 0.1,  1.5]} intensity={0.85} />
-      {/* nad przejściem (RoomA strona) */}
       <IndustrialLamp position={[0, ROOM.h - 0.1, -ROOM.d/2 + 0.4]} intensity={1.25} />
       {/* RoomB */}
       <IndustrialLamp position={[-2.5, ROOM.h - 0.1, -ROOM.d - 2]} intensity={0.9} />
       <IndustrialLamp position={[ 2.5, ROOM.h - 0.1, -ROOM.d + 1.5]} intensity={0.85} />
-      <pointLight position={[0, ROOM.h - 0.2, -ROOM.d/2 + 0.6]} intensity={1.2} distance={10} />
+      {/* RoomC */}
+      <IndustrialLamp position={[-2.5, ROOM.h - 0.1, -ROOM.d*2 - 2]} intensity={0.9} />
+      <IndustrialLamp position={[ 2.5, ROOM.h - 0.1, -ROOM.d*2 + 1.5]} intensity={0.85} />
+      {/* RoomD */}
+      <IndustrialLamp position={[-2.5, ROOM.h - 0.1, -ROOM.d*3 - 2]} intensity={0.9} />
+      <IndustrialLamp position={[ 2.5, ROOM.h - 0.1, -ROOM.d*3 + 1.5]} intensity={0.85} />
     </>
   )
 }
 
 export default function XRScene() {
-  const { gl, scene } = useThree()
+  const { gl, scene, camera } = useThree()
   const [solved, setSolved] = useState<[boolean, boolean, boolean]>([false, false, false])
 
   useEffect(() => {
@@ -90,13 +106,23 @@ export default function XRScene() {
     })
   }
 
+  // globalny licznik klatek + wsparcie dla userData.tick
+  useFrame((_, dt) => {
+    __frameNo++
+    scene.traverse((o: any) => {
+      if (typeof o.userData?.tick === "function") o.userData.tick(dt, camera)
+    })
+  })
+
   return (
     <group>
       <InteractKeyListener />
       <Lights />
 
       <Room1 solved={solved} onSolved={markSolved} consumeE={consumeE} />
-      <Room2 />
+      <Room2 consumeE={consumeE} />
+      <Room3 consumeE={consumeE} />
+      <Room4 />
 
       <ContactShadows position={[0, 0.001, 0]} opacity={0.45} scale={ROOM.w * 2} blur={2.6} far={3} />
     </group>

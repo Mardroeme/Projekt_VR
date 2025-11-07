@@ -44,11 +44,11 @@ function WallsWithStaticOpening({ orientation = "none" as DoorWallSide }) {
     const topH = h - doorH
     return (
       <group>
-        <mesh position={[ -(doorW / 2 + segW / 2), h / 2, z ]} castShadow userData={{ collider: true }}>
+        <mesh position={[-(doorW / 2 + segW / 2), h / 2, z]} castShadow userData={{ collider: true }}>
           <boxGeometry args={[segW, h, t]} />
           <primitive object={mat} attach="material" />
         </mesh>
-        <mesh position={[ doorW / 2 + segW / 2, h / 2, z ]} castShadow userData={{ collider: true }}>
+        <mesh position={[doorW / 2 + segW / 2, h / 2, z]} castShadow userData={{ collider: true }}>
           <boxGeometry args={[segW, h, t]} />
           <primitive object={mat} attach="material" />
         </mesh>
@@ -99,7 +99,7 @@ function Table({ position = [0, 0.8, 0] as [number, number, number] }) {
   )
 }
 
-// ====== Puzzle cubes like Room1 (range = 1.0, using WORLD position) ======
+// ====== Puzzle cubes (range = 1.0, WORLD position) ======
 function PuzzleCube({
   index, position, solved, onSolved, range = 1.0, consumeE,
 }: {
@@ -118,7 +118,7 @@ function PuzzleCube({
   useFrame(() => {
     const m = cubeRef.current
     if (!m) return
-    m.getWorldPosition(worldPos.current) // <— kluczowe: pozycja w przestrzeni świata
+    m.getWorldPosition(worldPos.current)
     const dist = worldPos.current.distanceTo(camera.position)
     const near = dist <= range!
     if (near !== inRange) setInRange(near)
@@ -168,7 +168,7 @@ function SlidingDoor({ open }: { open: boolean }) {
 
 type Props = { consumeE: () => boolean }
 
-export default function Room2({ consumeE }: Props) {
+export default function Room3({ consumeE }: Props) {
   const [solved, setSolved] = useState<[boolean, boolean, boolean]>([false, false, false])
   const solvedCount = (solved[0]?1:0)+(solved[1]?1:0)+(solved[2]?1:0)
   const doorOpen = solvedCount === 3
@@ -185,14 +185,14 @@ export default function Room2({ consumeE }: Props) {
   }
 
   return (
-    <group name="RoomB" position={[0, 0, -ROOM.d]}>
+    <group name="RoomC" position={[0, 0, -ROOM.d * 2]}>
       <Ground />
-      {/* przejścia południe <-> północ */}
+      {/* południe otwarte (wejście z Room2), północ pełna z drzwiami przesuwnymi */}
       <WallsWithStaticOpening orientation="both" />
       <Ceiling />
-      <Table position={[1.2, 0.8, 1]} />
+      <Table position={[0.2, 0.8, -0.6]} />
 
-      {/* puzzle cubes (zasięg 1.0 m, liczone w WORLD) */}
+      {/* puzzle cubes (zasięg 1.0 m) */}
       <PuzzleCube index={0} position={[-2.2, 0.8, -1.2]} solved={solved[0]} onSolved={handleSolved} consumeE={consumeE} />
       <PuzzleCube index={1} position={[ 0.0, 0.8,  0.8]} solved={solved[1]} onSolved={handleSolved} consumeE={consumeE} />
       <PuzzleCube index={2} position={[ 2.0, 0.8,  1.6]} solved={solved[2]} onSolved={handleSolved} consumeE={consumeE} />
@@ -205,6 +205,7 @@ export default function Room2({ consumeE }: Props) {
         </group>
       )}
 
+      {/* drzwi przesuwne na północ do Room4 */}
       <SlidingDoor open={doorOpen} />
     </group>
   )
