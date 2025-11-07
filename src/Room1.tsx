@@ -3,7 +3,7 @@ import { useMemo, useRef, useState, useEffect } from "react"
 import { useThree, useFrame } from "@react-three/fiber"
 import { Text, Billboard } from "@react-three/drei"
 
-// Wspólne parametry
+// ===== Wspólne parametry pokoju =====
 export const ROOM = { w: 12, d: 12, h: 3.0 }
 export const WALL_T = 0.2
 
@@ -25,7 +25,6 @@ function Ceiling() {
   )
 }
 
-// Prosty stolik jak w innych pokojach
 function Table({ position = [0, 0.8, 0] as [number, number, number] }) {
   return (
     <group position={position}>
@@ -65,7 +64,6 @@ function WallsWithStaticOpening({ orientation = "none" as DoorWallSide }) {
     const topH = h - doorH
     return (
       <group>
-        {/* Słupki z kolizją */}
         <mesh position={[-(doorW / 2 + segW / 2), h / 2, z]} castShadow userData={{ collider: true }}>
           <boxGeometry args={[segW, h, t]} />
           <primitive object={mat} attach="material" />
@@ -74,7 +72,6 @@ function WallsWithStaticOpening({ orientation = "none" as DoorWallSide }) {
           <boxGeometry args={[segW, h, t]} />
           <primitive object={mat} attach="material" />
         </mesh>
-        {/* nadproże bez kolizji */}
         <mesh position={[0, doorH + (topH / 2), z]} castShadow userData={{ collider: false }}>
           <boxGeometry args={[doorW, topH, t]} />
           <primitive object={mat} attach="material" />
@@ -182,22 +179,14 @@ function KeyButton({
   const press = (e: any) => {
     e.stopPropagation?.()
     if (!ref.current) return
-
-    // 1) Sprawdzenie dystansu do kamery na podstawie world position przycisku
     const world = new THREE.Vector3()
     ref.current.getWorldPosition(world)
     const distWorld = world.distanceTo(camera.position)
-
-    // 2) Sprawdzenie dystansu raportowanego przez raycaster (jeśli dostępny)
     const distRay = typeof e?.distance === "number" ? e.distance : Infinity
-
-    // Akceptuj tylko, gdy JEDNOCZEŚNIE spełnione: blisko kamery i raycast krótki
     if (distWorld > 1.0 || distRay > 1.1) return
-
     onToggle()
   }
 
-  // animacja wciskania: przesuw w głąb Z lokalnego
   const zOffset = isOn ? -0.05 : 0
 
   return (
@@ -207,7 +196,7 @@ function KeyButton({
         position={[0, 0, zOffset]}
         castShadow
         userData={{ collider: true }}
-        onPointerDown={press}   // VR i desktop
+        onPointerDown={press}
       >
         <boxGeometry args={[0.3, 0.3, 0.1]} />
         <meshStandardMaterial color={isOn ? "#15c915" : "#444"} />
@@ -230,7 +219,6 @@ function KeypadPuzzle({
 
   useEffect(() => {
     if (solvedAlready) return
-    // warunek: 7,8,9 wciśnięte
     let ok = true
     goal.forEach(g => { if (!onSet.has(g)) ok = false })
     if (ok) onSolved()
@@ -239,19 +227,14 @@ function KeypadPuzzle({
   const toggle = (n: string) => {
     setOnSet(prev => {
       const next = new Set(prev)
-      if (next.has(n)) {
-        next.delete(n) // dezaktywacja
-      } else {
-        if (next.size >= 3) return prev // limit 3 – ignoruj nowe
-        next.add(n)
-      }
+      if (next.has(n)) { next.delete(n) } else { if (next.size >= 3) return prev; next.add(n) }
       return next
     })
   }
 
   const buttons = ["1","2","3","4","5","6","7","8","9","0"]
   const positions: [number, number, number][] = buttons.map((_, i) => {
-    const row = Math.floor(i / 5) // 0: górny, 1: dolny
+    const row = Math.floor(i / 5)
     const col = i % 5
     return [col * 0.35 - 0.7, row * -0.35, 0]
   })
@@ -268,6 +251,162 @@ function KeypadPuzzle({
           isOn={onSet.has(b)}
           onToggle={() => toggle(b)}
           localPos={positions[i]}
+        />
+      ))}
+    </group>
+  )
+}
+
+// ====== ZAGADKA: Sekwencja świateł (Simon) — górne pokazują, dolne klikane ======
+function LightDisc({
+  color, active, onPress, localPos, distanceLimit = 1.2, interactive = true
+}: {
+  color: string
+  active: boolean
+  onPress?: () => void
+  localPos: [number, number, number]
+  distanceLimit?: number
+  interactive?: boolean
+}) {
+  const { camera } = useThree()
+  const ref = useRef<THREE.Mesh>(null)
+
+  const press = (e: any) => {
+    if (!interactive) return
+    e.stopPropagation?.()
+    if (!ref.current) return
+    const wp = new THREE.Vector3()
+    ref.current.getWorldPosition(wp)
+    const distWorld = wp.distanceTo(camera.position)
+    const distRay = typeof e?.distance === "number" ? e.distance : Infinity
+    if (distWorld > distanceLimit || distRay > distanceLimit + 0.1) return
+    onPress && onPress()
+  }
+
+  return (
+    <mesh
+      ref={ref}
+      position={localPos}
+      rotation={[Math.PI / 2, 0, 0]}
+      castShadow
+      onPointerDown={interactive ? press : undefined}
+      userData={{ collider: true }}
+    >
+      <cylinderGeometry args={[0.18, 0.18, 0.06, 24]} />
+      <meshStandardMaterial
+        color={color}
+        emissive={color}
+        emissiveIntensity={active ? 1.6 : 0.05}
+        roughness={0.5}
+        metalness={0.1}
+      />
+    </mesh>
+  )
+}
+
+function LightSequencePuzzle({
+  solvedAlready, onSolved
+}: {
+  solvedAlready: boolean
+  onSolved: () => void
+}) {
+  const COLORS = ["#ff3b3b", "#26d07c", "#3da3ff", "#ffd93b"] // czerwony, zielony, niebieski, żółty
+  const [sequence, setSequence] = useState<number[]>([])
+  const [showing, setShowing] = useState(false)
+  const [activeTop, setActiveTop] = useState<number | null>(null)
+  const [activeBottom, setActiveBottom] = useState<number | null>(null)
+  const [inputIdx, setInputIdx] = useState(0)
+  const [ready, setReady] = useState(false)
+
+  // start sekwencji
+  useEffect(() => {
+    if (solvedAlready) return
+    const seq = Array.from({ length: 3 }, () => Math.floor(Math.random() * 4))
+    setSequence(seq)
+    const t = setTimeout(() => play(seq, 0), 500)
+    return () => clearTimeout(t)
+  }, [])
+
+  const play = (seq: number[], i: number) => {
+    setShowing(true)
+    if (i >= seq.length) {
+      setActiveTop(null)
+      setShowing(false)
+      setReady(true)
+      setInputIdx(0)
+      return
+    }
+    setActiveTop(seq[i])
+    setTimeout(() => {
+      setActiveTop(null)
+      setTimeout(() => play(seq, i + 1), 300)
+    }, 600)
+  }
+
+  const pressBottom = (idx: number) => {
+    if (solvedAlready || showing || !ready) return
+    const expected = sequence[inputIdx]
+
+    // zapal dolny krążek
+    setActiveBottom(idx)
+
+    if (idx === expected) {
+      const next = inputIdx + 1
+      if (next >= sequence.length) {
+        // Ostatni poprawny wybór: zostaw podświetlenie na moment, potem zalicz
+        setReady(false)
+        setTimeout(() => {
+          setActiveBottom(null)
+          onSolved()
+        }, 250)
+      } else {
+        // Środek sekwencji: krótki flash i dalej
+        setTimeout(() => setActiveBottom(null), 150)
+        setInputIdx(next)
+      }
+    } else {
+      // Błąd — krótka pauza i powtórka sekwencji, zgaś dolny
+      setTimeout(() => setActiveBottom(null), 150)
+      setReady(false)
+      setInputIdx(0)
+      setTimeout(() => play(sequence, 0), 400)
+    }
+  }
+
+  // pozycje względem południowej ściany
+  const wallInnerZ = ROOM.d / 2 - WALL_T / 2
+  const zCenter = -0.04
+  const topY = 0.2
+  const bottomY = -0.25
+
+  const baseX = [-0.6, -0.2, 0.2, 0.6]
+
+  return (
+    <group position={[0, 1.5, wallInnerZ]}>
+      <Text position={[0, 0.55, 0.01]} fontSize={0.18} color={"#e6edf3"} anchorX="center" anchorY="middle">
+        Odtwórz sekwencję
+      </Text>
+
+      {/* GÓRNE – tylko wizualizacja */}
+      {baseX.map((x, i) => (
+        <LightDisc
+          key={"top-" + i}
+          color={COLORS[i]}
+          active={activeTop === i}
+          localPos={[x, topY, zCenter]}
+          interactive={false}
+        />
+      ))}
+
+      {/* DOLNE – szare, klikalne */}
+      {baseX.map((x, i) => (
+        <LightDisc
+          key={"bottom-" + i}
+          color={activeBottom === i ? "#cfcfcf" : "#8a8a8a"}
+          active={activeBottom === i}
+          localPos={[x, bottomY, zCenter]}
+          interactive={true}
+          onPress={() => pressBottom(i)}
         />
       ))}
     </group>
@@ -299,6 +438,7 @@ function SlidingDoor({ open }: { open: boolean }) {
   )
 }
 
+// ====== GŁÓWNY KOMPONENT POKOJU ======
 export default function Room1({
   solved, onSolved, consumeE
 }: {
@@ -306,6 +446,7 @@ export default function Room1({
   onSolved: (idx: number) => void
   consumeE: () => boolean
 }) {
+  // MAPPING: [0]=kostka, [1]=panel numeryczny, [2]=sekwencja świateł (góra pokazuje, dół klikasz)
   const solvedCount = (solved[0] ? 1 : 0) + (solved[1] ? 1 : 0) + (solved[2] ? 1 : 0)
   const doorOpen = solvedCount === 3
   const zAtWall = -ROOM.d / 2 + WALL_T / 2
@@ -318,13 +459,15 @@ export default function Room1({
       <Ceiling />
       <InstructionPoster />
 
-      {/* 2 kostki */}
+      {/* 1 kostka */}
       <Table position={[-2.2, 0.8, -0.5]} />
       <PuzzleCube index={0} position={[0, 0.8, 1]} solved={solved[0]} onSolved={onSolved} consumeE={consumeE} />
-      <PuzzleCube index={1} position={[2, 0.8, 2]} solved={solved[1]} onSolved={onSolved} consumeE={consumeE} />
 
-      {/* panel numeryczny jako trzecia zagadka */}
-      <KeypadPuzzle solvedAlready={solved[2]} onSolved={() => onSolved(2)} />
+      {/* Panel numeryczny */}
+      <KeypadPuzzle solvedAlready={solved[1]} onSolved={() => onSolved(1)} />
+
+      {/* Sekwencja świateł: góra (display only) + dół (input) */}
+      <LightSequencePuzzle solvedAlready={solved[2]} onSolved={() => onSolved(2)} />
 
       {!doorOpen && (
         <group position={[0, doorH + 0.35, zAtWall + 0.06]} rotation={[0, 0, 0]}>
