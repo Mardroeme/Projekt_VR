@@ -1,10 +1,14 @@
-
 import * as THREE from "three"
-import { useMemo, useRef, useState } from "react"
+import { useMemo, useRef, useState, useEffect } from "react"
 import { useThree, useFrame } from "@react-three/fiber"
 import { Text, Billboard } from "@react-three/drei"
 
-// Wspólne parametry
+// lokalny typ (bez importu z XRScene, żeby nie robić cyklicznych zależności)
+type VRReg = {
+  register: (obj: THREE.Object3D, onSelect: (hit: THREE.Intersection) => void) => () => void
+}
+
+// ===== Wspólne parametry pokoju =====
 export const ROOM = { w: 12, d: 12, h: 3.0 }
 export const WALL_T = 0.2
 
@@ -23,6 +27,25 @@ function Ceiling() {
       <planeGeometry args={[ROOM.w, ROOM.d]} />
       <meshStandardMaterial color={"#2a2f36"} roughness={0.98} />
     </mesh>
+  )
+}
+
+function Table({ position = [0, 0.8, 0] as [number, number, number] }) {
+  return (
+    <group position={position}>
+      <mesh castShadow position={[0, -0.05, 0]} userData={{ collider: true }}>
+        <boxGeometry args={[1.2, 0.1, 0.7]} />
+        <meshStandardMaterial color={"#404853"} roughness={0.85} />
+      </mesh>
+      {[-0.5, 0.5].map((x) =>
+        [-0.25, 0.25].map((z) => (
+          <mesh key={`${x}-${z}`} position={[x, -0.45, z]} castShadow userData={{ collider: true }}>
+            <boxGeometry args={[0.08, 0.8, 0.08]} />
+            <meshStandardMaterial color={"#3a414b"} />
+          </mesh>
+        ))
+      )}
+    </group>
   )
 }
 
@@ -54,7 +77,6 @@ function WallsWithStaticOpening({ orientation = "none" as DoorWallSide }) {
           <boxGeometry args={[segW, h, t]} />
           <primitive object={mat} attach="material" />
         </mesh>
-        {/* nadproże bez kolizji */}
         <mesh position={[0, doorH + (topH / 2), z]} castShadow userData={{ collider: false }}>
           <boxGeometry args={[doorW, topH, t]} />
           <primitive object={mat} attach="material" />
@@ -82,83 +104,350 @@ function WallsWithStaticOpening({ orientation = "none" as DoorWallSide }) {
   )
 }
 
-function Table({ position = [0, 0.8, 0] as [number, number, number] }) {
-  return (
-    <group position={position}>
-      <mesh castShadow position={[0, -0.05, 0]} userData={{ collider: true }}>
-        <boxGeometry args={[1.2, 0.1, 0.7]} />
-        <meshStandardMaterial color={"#404853"} roughness={0.85} />
-      </mesh>
-      {[-0.5, 0.5].map((x) =>
-        [-0.25, 0.25].map((z) => (
-          <mesh key={`${x}-${z}`} position={[x, -0.45, z]} castShadow userData={{ collider: true }}>
-            <boxGeometry args={[0.08, 0.8, 0.08]} />
-            <meshStandardMaterial color={"#3a414b"} />
-          </mesh>
-        ))
-      )}
-    </group>
-  )
-}
-
 function InstructionPoster() {
-  const x = -ROOM.w/2 + 0.18
+  const x = -ROOM.w / 2 + 0.18
   return (
     <group position={[x, 1.35, -1.5]}>
-      <mesh rotation={[0, Math.PI/2, 0]} castShadow userData={{ collider: false }}>
+      <mesh rotation={[0, Math.PI / 2, 0]} castShadow userData={{ collider: false }}>
         <planeGeometry args={[1.8, 1.1]} />
         <meshStandardMaterial color={"#15181d"} roughness={0.9} side={THREE.DoubleSide} />
       </mesh>
-      <group rotation={[0, Math.PI/2, 0]} position={[0.002, 0, 0.001]}>
+      <group rotation={[0, Math.PI / 2, 0]} position={[0.002, 0, 0.001]}>
         <Text fontSize={0.12} maxWidth={1.6} lineHeight={1.2} color={"#e6edf3"} anchorX="center" anchorY="middle">
-          {`INSTRUKCJA:\nZbierz/aktywuj 3 kostki (E).\nPo 3/3 drzwi przesuną się i przejście będzie wolne.`}
+          {`INSTRUKCJA:\nAktywuj 3 zagadki.\nDrzwi na północy otworzą się po 3/3. Przerwa na kremówkę.`}
         </Text>
       </group>
     </group>
   )
 }
 
-function PuzzleCube({
-  index,
-  position,
-  solved,
+// ====== ZAGADKA 1: token do przeniesienia między stolikami ======
+function TokenPuzzle({
+  solvedAlready,
   onSolved,
-  range = 2.0,
   consumeE,
 }: {
-  index: number
-  position: [number, number, number]
-  solved: boolean
-  onSolved: (idx: number) => void
-  range?: number
+  solvedAlready: boolean
+  onSolved: () => void
   consumeE: () => boolean
 }) {
   const { camera } = useThree()
-  const cubeRef = useRef<THREE.Mesh>(null)
-  const [inRange, setInRange] = useState(false)
+  const tokenRef = useRef<THREE.Mesh>(null)
+  const [carried, setCarried] = useState(false)
+  const [placed, setPlaced] = useState(solvedAlready)
+
+  const sourcePos = useRef(new THREE.Vector3(-2.2, 0.95, -0.5))
+  const targetPos = useRef(new THREE.Vector3(2.2, 0.95, -0.5))
+  const tmpForward = useRef(new THREE.Vector3())
+  const tmpPos = useRef(new THREE.Vector3())
+
+  useEffect(() => {
+    if (solvedAlready) setPlaced(true)
+  }, [solvedAlready])
 
   useFrame(() => {
-    const m = cubeRef.current
-    if (!m) return
-    const dist = m.position.distanceTo(camera.position)
-    const near = dist <= range
-    if (near !== inRange) setInRange(near)
-    if (!solved && near && consumeE()) onSolved(index)
+    const token = tokenRef.current
+    if (!token) return
+
+    if (carried) {
+      tmpForward.current.set(0, 0, -1).applyQuaternion(camera.quaternion)
+      tmpForward.current.y = 0
+      tmpForward.current.normalize()
+      tmpPos.current.copy(camera.position)
+      tmpPos.current.addScaledVector(tmpForward.current, 0.9)
+      tmpPos.current.y -= 0.15
+      token.position.copy(tmpPos.current)
+    } else {
+      token.position.copy(placed ? targetPos.current : sourcePos.current)
+    }
+
+    if (placed || solvedAlready) return
+
+    if (consumeE()) {
+      const camPos = camera.position
+      const distSource = camPos.distanceTo(sourcePos.current)
+      const distTarget = camPos.distanceTo(targetPos.current)
+
+      if (!carried && distSource <= 1.1) {
+        setCarried(true)
+        return
+      }
+      if (carried && distTarget <= 1.1) {
+        setCarried(false)
+        setPlaced(true)
+        onSolved()
+        return
+      }
+    }
   })
 
   return (
     <group>
-      <mesh ref={cubeRef} position={position} castShadow userData={{ collider: true }}>
-        <boxGeometry args={[0.5, 0.5, 0.5]} />
-        <meshStandardMaterial color={solved ? "limegreen" : "gold"} />
+      {/* dwa stoliki */}
+      <Table position={[-2.2, 0.8, -0.5]} />
+      <Table position={[2.2, 0.8, -0.5]} />
+
+      {/* gniazdo na token */}
+      <mesh
+        position={[targetPos.current.x, targetPos.current.y + 0.01, targetPos.current.z]}
+        rotation={[-Math.PI / 2, 0, 0]}
+        receiveShadow
+        userData={{ collider: false }}
+      >
+        <ringGeometry args={[0.18, 0.34, 32]} />
+        <meshStandardMaterial
+          color={placed ? "#2fe22f" : "#888888"}
+          emissive={placed ? "#2fe22f" : "#000000"}
+          emissiveIntensity={placed ? 0.7 : 0}
+          roughness={0.4}
+        />
       </mesh>
-      {!solved && inRange && (
-        <Billboard position={[position[0], position[1] + 0.55, position[2]]}>
+
+      {/* sam token */}
+      <mesh ref={tokenRef} castShadow userData={{ collider: true }}>
+        <cylinderGeometry args={[0.28, 0.28, 0.12, 24]} />
+        <meshStandardMaterial color={placed ? "#15c915" : "#ffcc33"} metalness={0.35} roughness={0.4} />
+      </mesh>
+
+      {/* podpowiedź */}
+      {!placed && (
+        <Billboard position={[-2.2, 1.5, -0.5]}>
           <Text fontSize={0.16} color={"#ffffff"} anchorX="center" anchorY="middle">
-            E – interakcja
+            {`Weź token (E)\ni zanieś na drugi stół`}
           </Text>
         </Billboard>
       )}
+    </group>
+  )
+}
+
+// ====== PANEL NUMERYCZNY – klik tylko, max 3 aktywne, twarde sprawdzenie dystansu ======
+function KeyButton({
+  label,
+  onToggle,
+  isOn,
+  localPos,
+  vr,
+}: {
+  label: string
+  onToggle: () => void
+  isOn: boolean
+  localPos: [number, number, number]
+  vr?: VRReg
+}) {
+  const { camera } = useThree()
+  const ref = useRef<THREE.Mesh>(null)
+
+  const press = (e: any) => {
+    e.stopPropagation?.()
+    if (!ref.current) return
+    const world = new THREE.Vector3()
+    ref.current.getWorldPosition(world)
+    const distWorld = world.distanceTo(camera.position)
+    const distRay = typeof e?.distance === "number" ? e.distance : Infinity
+    if (distWorld > 1.0 || distRay > 1.1) return
+    onToggle()
+  }
+
+  const zOffset = isOn ? -0.05 : 0
+
+  // VR: trigger/select ma działać jak klik
+  useEffect(() => {
+    if (!vr || !ref.current) return
+    return vr.register(ref.current, (hit) => {
+      press({ stopPropagation: () => {}, distance: hit.distance, object: hit.object })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vr, isOn])
+
+  return (
+    <group position={localPos}>
+      <mesh ref={ref} position={[0, 0, zOffset]} castShadow userData={{ collider: true }} onPointerDown={press}>
+        <boxGeometry args={[0.3, 0.3, 0.1]} />
+        <meshStandardMaterial color={isOn ? "#15c915" : "#444"} />
+        <Text position={[0, 0, 0.06]} fontSize={0.15} color={"#fff"} anchorX="center" anchorY="middle">
+          {label}
+        </Text>
+      </mesh>
+    </group>
+  )
+}
+
+function KeypadPuzzle({
+  solvedAlready,
+  onSolved,
+  vr,
+}: {
+  solvedAlready: boolean
+  onSolved: () => void
+  vr?: VRReg
+}) {
+  const [onSet, setOnSet] = useState<Set<string>>(new Set())
+  const goal = new Set(["7", "8", "9"])
+
+  useEffect(() => {
+    if (solvedAlready) return
+    let ok = true
+    goal.forEach((g) => {
+      if (!onSet.has(g)) ok = false
+    })
+    if (ok) onSolved()
+  }, [onSet, solvedAlready])
+
+  const toggle = (n: string) => {
+    setOnSet((prev) => {
+      const next = new Set(prev)
+      if (next.has(n)) {
+        next.delete(n)
+      } else {
+        if (next.size >= 3) return prev
+        next.add(n)
+      }
+      return next
+    })
+  }
+
+  const buttons = ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+  const positions: [number, number, number][] = buttons.map((_, i) => {
+    const row = Math.floor(i / 5)
+    const col = i % 5
+    return [col * 0.35 - 0.7, row * -0.35, 0]
+  })
+
+  return (
+    <group position={[ROOM.w / 2 - 0.21, 1.4, 0]} rotation={[0, -Math.PI / 2, 0]}>
+      <Text position={[0, 0.9, 0.01]} fontSize={0.2} color={"#e6edf3"} anchorX="center" anchorY="middle">
+        Dlaczego 6 bało się 7?
+      </Text>
+      {buttons.map((b, i) => (
+        <KeyButton key={b} label={b} isOn={onSet.has(b)} onToggle={() => toggle(b)} localPos={positions[i]} vr={vr} />
+      ))}
+    </group>
+  )
+}
+
+/* ====== ZAGADKA: Dźwignie (kolejność I → II → III) ======
+   Zamiennik dla Simona: stabilne pod VR/trigger.
+*/
+function LeverPuzzle({
+  solvedAlready,
+  onSolved,
+  vr,
+}: {
+  solvedAlready: boolean
+  onSolved: () => void
+  vr?: VRReg
+}) {
+  const order = [0, 1, 2]
+  const progress = useRef<number[]>([])
+  const [on, setOn] = useState([false, false, false])
+
+  useEffect(() => {
+    if (solvedAlready) setOn([true, true, true])
+  }, [solvedAlready])
+
+  const reset = () => {
+    progress.current = []
+    setOn([false, false, false])
+  }
+
+  const press = (idx: number) => {
+    if (solvedAlready) return
+
+    const expected = order[progress.current.length]
+    if (idx !== expected) {
+      reset()
+      return
+    }
+
+    progress.current.push(idx)
+    setOn((p) => {
+      const n = [...p]
+      n[idx] = true
+      return n
+    })
+
+    if (progress.current.length === order.length) {
+      onSolved()
+    }
+  }
+
+  const Lever = ({ idx, local }: { idx: number; local: [number, number, number] }) => {
+    const hitRef = useRef<THREE.Object3D>(null)
+    const handleRef = useRef<THREE.Group>(null)
+
+    useFrame((_, dt) => {
+      const g = handleRef.current
+      if (!g) return
+      // "opuszczanie" dźwigni
+      const target = on[idx] ? -1.15 : 0.15
+      g.rotation.x = THREE.MathUtils.damp(g.rotation.x, target, 10, dt)
+    })
+
+    useEffect(() => {
+      if (!vr || !hitRef.current) return
+      return vr.register(hitRef.current, () => press(idx))
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vr, solvedAlready])
+
+    return (
+      <group position={local}>
+        {/* niewidzialny hitbox pod trigger/LPM */}
+        <mesh
+          ref={hitRef as any}
+          position={[0, 0.05, 0.05]}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            press(idx)
+          }}
+        >
+          <boxGeometry args={[0.55, 0.7, 0.35]} />
+          <meshStandardMaterial transparent opacity={0} />
+        </mesh>
+
+        {/* podstawa */}
+        <mesh position={[0, -0.15, 0]} castShadow>
+          <boxGeometry args={[0.35, 0.25, 0.12]} />
+          <meshStandardMaterial color={"#2b3038"} roughness={0.8} />
+        </mesh>
+
+        {/* rączka - animowana */}
+        <group ref={handleRef} position={[0, -0.02, 0.02]}>
+          <mesh position={[0, 0.22, 0]} castShadow>
+            <cylinderGeometry args={[0.035, 0.035, 0.55, 16]} />
+            <meshStandardMaterial color={on[idx] ? "#2bdc3a" : "#c9cbd1"} roughness={0.4} metalness={0.2} />
+          </mesh>
+          <mesh position={[0, 0.52, 0]} castShadow>
+            <boxGeometry args={[0.14, 0.08, 0.12]} />
+            <meshStandardMaterial color={on[idx] ? "#2bdc3a" : "#c9cbd1"} roughness={0.4} metalness={0.2} />
+          </mesh>
+        </group>
+
+        {/* numer */}
+        <Text position={[0, -0.42, 0.08]} fontSize={0.12} color="white" anchorX="center" anchorY="middle">
+          {idx + 1}
+        </Text>
+      </group>
+    )
+  }
+
+  // przeciwległa ściana do drzwi: drzwi są na Z-, więc puzzle dajemy na Z+
+  const zFront = ROOM.d / 2 - WALL_T / 2 - 0.06
+
+  return (
+    <group position={[0, 1.35, zFront]} rotation={[0, Math.PI, 0]}>
+      <mesh position={[0, 0, -0.03]} receiveShadow>
+        <boxGeometry args={[2.4, 1.2, 0.06]} />
+        <meshStandardMaterial color={"#121417"} roughness={0.9} />
+      </mesh>
+
+      <Lever idx={0} local={[-0.7, 0, 0]} />
+      <Lever idx={1} local={[0, 0, 0]} />
+      <Lever idx={2} local={[0.7, 0, 0]} />
+
+      <Text position={[0, 0.62, 0.08]} fontSize={0.14} color="white" anchorX="center">
+        Kolejność: I → II → III
+      </Text>
     </group>
   )
 }
@@ -187,14 +476,20 @@ function SlidingDoor({ open }: { open: boolean }) {
   )
 }
 
+// ====== GŁÓWNY KOMPONENT POKOJU ======
 export default function Room1({
-  solved, onSolved, consumeE
+  solved,
+  onSolved,
+  consumeE,
+  vr,
 }: {
   solved: [boolean, boolean, boolean]
   onSolved: (idx: number) => void
   consumeE: () => boolean
+  vr?: VRReg
 }) {
-  const solvedCount = (solved[0]?1:0)+(solved[1]?1:0)+(solved[2]?1:0)
+  // MAPPING: [0]=token, [1]=panel numeryczny, [2]=sekwencja świateł
+  const solvedCount = (solved[0] ? 1 : 0) + (solved[1] ? 1 : 0) + (solved[2] ? 1 : 0)
   const doorOpen = solvedCount === 3
   const zAtWall = -ROOM.d / 2 + WALL_T / 2
   const doorH = 2.3
@@ -204,15 +499,16 @@ export default function Room1({
       <Ground />
       <WallsWithStaticOpening orientation="north" />
       <Ceiling />
-
       <InstructionPoster />
 
-      <Table position={[-2.2, 0.8, -0.5]} />
-      <Table position={[2.4, 0.8, 1.4]} />
+      {/* 1. ZAGADKA: przeniesienie tokenu */}
+      <TokenPuzzle solvedAlready={solved[0]} onSolved={() => onSolved(0)} consumeE={consumeE} />
 
-      <PuzzleCube index={0} position={[-2, 0.8, -1]} solved={solved[0]} onSolved={onSolved} consumeE={consumeE} />
-      <PuzzleCube index={1} position={[0, 0.8, 1]} solved={solved[1]} onSolved={onSolved} consumeE={consumeE} />
-      <PuzzleCube index={2} position={[2, 0.8, 2]} solved={solved[2]} onSolved={onSolved} consumeE={consumeE} />
+      {/* 2. Panel numeryczny */}
+      <KeypadPuzzle solvedAlready={solved[1]} onSolved={() => onSolved(1)} vr={vr} />
+
+      {/* 3. Sekwencja świateł: góra (display only) + dół (input) */}
+      <LeverPuzzle solvedAlready={solved[2]} onSolved={() => onSolved(2)} vr={vr} />
 
       {!doorOpen && (
         <group position={[0, doorH + 0.35, zAtWall + 0.06]} rotation={[0, 0, 0]}>
