@@ -704,6 +704,7 @@ function FinalDialPuzzle({
 // ====== ZAGADKA 3 (FINAŁ): sekwencja dźwięków (bez plików – generowane tony) ======
 // 3 przyciski A/B/C. Najpierw wysłuchaj sekwencji, potem kliknij w tej samej kolejności.
 // Błąd = reset do początku. Sekwencja sama odtwarza się co 5s, gdy jesteś blisko i zagadka nie jest rozwiązana.
+
 function SoundSequenceFinalPuzzle({
   solvedAlready,
   onSolved,
@@ -726,8 +727,11 @@ function SoundSequenceFinalPuzzle({
   const [near, setNear] = useState(false)
   const [playing, setPlaying] = useState(false)
 
+  // tryb: zanim zaczniesz klikać, możesz odsłuchać (auto lub przyciskiem)
+  const [mode, setMode] = useState<"idle" | "listening" | "input">("idle")
+
   const RANGE = 2.8
-  const REPLAY_EVERY = 5.0 // sek
+  const REPLAY_EVERY = 6.0 // sek (troszkę dłużej, żeby nie wchodziło w drogę)
 
   // proste generowanie dźwięków WebAudio (bez assetów)
   const audioCtxRef = useRef<AudioContext | null>(null)
@@ -742,17 +746,16 @@ function SoundSequenceFinalPuzzle({
       try {
         await audioCtxRef.current.resume()
       } catch {
-        // zostaw – i tak zadziała przy kolejnej interakcji
+        // ok
       }
     }
     return audioCtxRef.current
   }
 
   const toneHz = (idx: number) => {
-    // A: niski, B: średni, C: wysoki
-    if (idx === 0) return 220
-    if (idx === 1) return 440
-    return 660
+    if (idx === 0) return 220 // A
+    if (idx === 1) return 440 // B
+    return 660 // C
   }
 
   const playTone = async (idx: number, dur = 0.22) => {
@@ -779,8 +782,13 @@ function SoundSequenceFinalPuzzle({
 
   const playSequence = async () => {
     if (playing || solvedAlready) return
+
+    // kluczowa zmiana: odsłuch NIE resetuje Ci postępu, jeśli jesteś w trakcie wpisywania (mode === "input")
+    // odsłuch jest tylko w idle/listening
+    if (mode === "input") return
+
     setPlaying(true)
-    setStep(0)
+    setMode("listening")
     await ensureAudio()
 
     for (const i of SEQ) {
@@ -789,27 +797,38 @@ function SoundSequenceFinalPuzzle({
     }
 
     setPlaying(false)
+    setMode("input")
+    setStep(0)
   }
 
   const press = async (idx: number) => {
     if (solvedAlready) return
     if (playing) return
 
-    await playTone(idx, 0.20)
-
-    if (idx === SEQ[step]) {
-      const next = step + 1
-      if (next >= SEQ.length) {
-        onSolved()
-      } else {
-        setStep(next)
-      }
-    } else {
+    // jeśli jeszcze nie odsłuchałeś, to pierwszy klik przełącza na input, ale nie odpala odsłuchu (żeby trigger nie resetował)
+    if (mode !== "input") {
+      setMode("input")
       setStep(0)
     }
+
+    await playTone(idx, 0.20)
+
+    setStep((prev) => {
+      const expected = SEQ[prev]
+      if (idx === expected) {
+        const next = prev + 1
+        if (next >= SEQ.length) {
+          onSolved()
+          return prev
+        }
+        return next
+      }
+      // błąd = reset do początku
+      return 0
+    })
   }
 
-  // pozycja finału: prawa ściana, ale nie na panelu kodu (trochę bliżej drzwi)
+  // pozycja finału
   const panelX = ROOM.w / 2 - WALL_T / 2 - 0.08
   const panelPos: [number, number, number] = [panelX, 1.25, -2.2]
   const panelRot: [number, number, number] = [0, -Math.PI / 2, 0]
@@ -830,8 +849,8 @@ function SoundSequenceFinalPuzzle({
     const n = d <= RANGE
     if (n !== near) setNear(n)
 
-    // automatyczne odtwarzanie sekwencji co 5s, gdy jesteś blisko
-    if (!solvedAlready && n && !playing) {
+    // auto odsłuch tylko zanim zaczniesz wpisywać (nie psuje inputu)
+    if (!solvedAlready && n && !playing && mode !== "input") {
       const t = clock.getElapsedTime()
       if (t - lastReplayRef.current >= REPLAY_EVERY) {
         lastReplayRef.current = t
@@ -839,16 +858,16 @@ function SoundSequenceFinalPuzzle({
       }
     }
 
-    // E – wymuś odtworzenie sekwencji (albo klikaj)
-    if (!solvedAlready && n && consumeE()) {
+    // E – odsłuch (TYLKO poza inputem)
+    if (!solvedAlready && n && mode !== "input" && consumeE()) {
+      lastReplayRef.current = clock.getElapsedTime()
       playSequence()
     }
   })
 
   const buttonColor = (i: number) => {
     if (solvedAlready) return "#15c915"
-    // podświetl oczekiwany następny przycisk delikatnie
-    return i === SEQ[step] ? "#b0a7ff" : "#2a2f38"
+    return i === SEQ[step] && mode === "input" ? "#b0a7ff" : "#2a2f38"
   }
 
   const labels = ["A", "B", "C"] as const
@@ -869,7 +888,6 @@ function SoundSequenceFinalPuzzle({
           Odsłuchaj → powtórz sekwencję
         </Text>
 
-        {/* przyciski */}
         <group position={[0, -0.10, 0.095]}>
           {[0, 1, 2].map((i) => (
             <VRClickableMesh
@@ -885,12 +903,7 @@ function SoundSequenceFinalPuzzle({
               }}
             >
               <boxGeometry args={[0.32, 0.26, 0.08]} />
-              <meshStandardMaterial
-                color={buttonColor(i)}
-                emissive={"#000000"}
-                emissiveIntensity={0.0}
-                roughness={0.55}
-              />
+              <meshStandardMaterial color={buttonColor(i)} emissive={"#000000"} emissiveIntensity={0.0} roughness={0.55} />
               <Text position={[0, 0, 0.055]} fontSize={0.14} color={"#e6edf3"} anchorX="center" anchorY="middle">
                 {labels[i]}
               </Text>
@@ -898,12 +911,16 @@ function SoundSequenceFinalPuzzle({
           ))}
         </group>
 
-        {/* status */}
-        <Text position={[0, -0.36, 0.095]} fontSize={0.12} color={solvedAlready ? "#15c915" : "#9aa6b2"} anchorX="center" anchorY="middle">
-          {solvedAlready ? "OK" : `Postęp: ${step}/${SEQ.length}`}
+        <Text
+          position={[0, -0.36, 0.095]}
+          fontSize={0.12}
+          color={solvedAlready ? "#15c915" : "#9aa6b2"}
+          anchorX="center"
+          anchorY="middle"
+        >
+          {solvedAlready ? "OK" : mode === "input" ? `Postęp: ${step}/${SEQ.length}` : "Odsłuchaj sekwencję"}
         </Text>
 
-        {/* przycisk odsłuchu */}
         <VRClickableMesh
           vr={vr}
           position={[0, -0.55, 0.095]}
@@ -912,11 +929,18 @@ function SoundSequenceFinalPuzzle({
           onPointerDown={(e) => {
             e.stopPropagation?.()
             if (!withinDistance(e)) return
+            lastReplayRef.current = (performance.now?.() ?? 0) / 1000
+            setMode("idle")
             playSequence()
           }}
         >
           <boxGeometry args={[0.95, 0.20, 0.06]} />
-          <meshStandardMaterial color={solvedAlready ? "#15c915" : "#b03030"} emissive={solvedAlready ? "#15c915" : "#b03030"} emissiveIntensity={0.18} roughness={0.55} />
+          <meshStandardMaterial
+            color={solvedAlready ? "#15c915" : "#b03030"}
+            emissive={solvedAlready ? "#15c915" : "#b03030"}
+            emissiveIntensity={0.18}
+            roughness={0.55}
+          />
           <Text position={[0, 0, 0.05]} fontSize={0.12} color={"#0b0d10"} anchorX="center" anchorY="middle">
             Odsłuchaj (E)
           </Text>

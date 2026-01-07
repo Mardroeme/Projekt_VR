@@ -326,70 +326,10 @@ function KeypadPuzzle({
   )
 }
 
-// ====== ZAGADKA: Sekwencja świateł (Simon) — górne pokazują, dolne klikane ======
-function LightDisc({
-  color,
-  active,
-  onPress,
-  localPos,
-  distanceLimit = 1.2,
-  interactive = true,
-  vr,
-}: {
-  color: string
-  active: boolean
-  onPress?: () => void
-  localPos: [number, number, number]
-  distanceLimit?: number
-  interactive?: boolean
-  vr?: VRReg
-}) {
-  const { camera } = useThree()
-  const ref = useRef<THREE.Mesh>(null)
-
-  const press = (e: any) => {
-    if (!interactive) return
-    e.stopPropagation?.()
-    if (!ref.current) return
-    const wp = new THREE.Vector3()
-    ref.current.getWorldPosition(wp)
-    const distWorld = wp.distanceTo(camera.position)
-    const distRay = typeof e?.distance === "number" ? e.distance : Infinity
-    if (distWorld > distanceLimit || distRay > distanceLimit + 0.1) return
-    onPress && onPress()
-  }
-
-  // VR: trigger/select ma działać jak klik
-  useEffect(() => {
-    if (!vr || !interactive || !ref.current) return
-    return vr.register(ref.current, (hit) => {
-      press({ stopPropagation: () => {}, distance: hit.distance, object: hit.object })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vr, interactive, active])
-
-  return (
-    <mesh
-      ref={ref}
-      position={localPos}
-      rotation={[Math.PI / 2, 0, 0]}
-      castShadow
-      onPointerDown={interactive ? press : undefined}
-      userData={{ collider: true }}
-    >
-      <cylinderGeometry args={[0.18, 0.18, 0.06, 24]} />
-      <meshStandardMaterial
-        color={color}
-        emissive={color}
-        emissiveIntensity={active ? 1.6 : 0.05}
-        roughness={0.5}
-        metalness={0.1}
-      />
-    </mesh>
-  )
-}
-
-function LightSequencePuzzle({
+/* ====== ZAGADKA: Dźwignie (kolejność I → II → III) ======
+   Zamiennik dla Simona: stabilne pod VR/trigger.
+*/
+function LeverPuzzle({
   solvedAlready,
   onSolved,
   vr,
@@ -398,132 +338,120 @@ function LightSequencePuzzle({
   onSolved: () => void
   vr?: VRReg
 }) {
-  const COLORS = ["#ff3b3b", "#26d07c", "#3da3ff", "#ffd93b"]
-  const [sequence, setSequence] = useState<number[]>([])
-  const [showing, setShowing] = useState(false)
-  const [activeTop, setActiveTop] = useState<number | null>(null)
-  const [activeBottom, setActiveBottom] = useState<number | null>(null)
-  const [inputIdx, setInputIdx] = useState(0)
-  const [ready, setReady] = useState(false)
+  const order = [0, 1, 2]
+  const progress = useRef<number[]>([])
+  const [on, setOn] = useState([false, false, false])
 
   useEffect(() => {
-    if (solvedAlready) return
-    const seq = Array.from({ length: 3 }, () => Math.floor(Math.random() * 4))
-    setSequence(seq)
-    const t = setTimeout(() => play(seq, 0), 500)
-    return () => clearTimeout(t)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    if (solvedAlready) setOn([true, true, true])
   }, [solvedAlready])
 
-  const play = (seq: number[], i: number) => {
-    setShowing(true)
-    if (i >= seq.length) {
-      setActiveTop(null)
-      setShowing(false)
-      setReady(true)
-      setInputIdx(0)
+  const reset = () => {
+    progress.current = []
+    setOn([false, false, false])
+  }
+
+  const press = (idx: number) => {
+    if (solvedAlready) return
+
+    const expected = order[progress.current.length]
+    if (idx !== expected) {
+      reset()
       return
     }
-    setActiveTop(seq[i])
-    setTimeout(() => {
-      setActiveTop(null)
-      setTimeout(() => play(seq, i + 1), 300)
-    }, 600)
-  }
 
-  // Automatyczne odtwarzanie sekwencji co 5 sekund, dopóki zagadka nie jest rozwiązana
-  useEffect(() => {
-    if (solvedAlready || sequence.length === 0) return
-    if (!ready || showing) return
-    const currentSeq = [...sequence]
-    const id = window.setTimeout(() => {
-      if (!solvedAlready) {
-        setReady(false)
-        setInputIdx(0)
-        play(currentSeq, 0)
-      }
-    }, 5000)
-    return () => window.clearTimeout(id)
-  }, [sequence, ready, showing, solvedAlready])
+    progress.current.push(idx)
+    setOn((p) => {
+      const n = [...p]
+      n[idx] = true
+      return n
+    })
 
-  const pressBottom = (idx: number) => {
-    if (solvedAlready || showing || !ready) return
-    const expected = sequence[inputIdx]
-
-    setActiveBottom(idx)
-
-    if (idx === expected) {
-      const next = inputIdx + 1
-      if (next >= sequence.length) {
-        setReady(false)
-        setTimeout(() => {
-          setActiveBottom(null)
-          onSolved()
-        }, 250)
-      } else {
-        setTimeout(() => setActiveBottom(null), 150)
-        setInputIdx(next)
-      }
-    } else {
-      setTimeout(() => setActiveBottom(null), 150)
-      setReady(false)
-      setInputIdx(0)
-      setTimeout(() => play(sequence, 0), 400)
+    if (progress.current.length === order.length) {
+      onSolved()
     }
   }
 
-  const wallInnerZ = ROOM.d / 2 - WALL_T / 2
-  const zCenter = -0.04
-  const topY = 0.2
-  const bottomY = -0.25
+  const Lever = ({ idx, local }: { idx: number; local: [number, number, number] }) => {
+    const hitRef = useRef<THREE.Object3D>(null)
+    const handleRef = useRef<THREE.Group>(null)
 
-  const baseX = [-0.6, -0.2, 0.2, 0.6]
+    useFrame((_, dt) => {
+      const g = handleRef.current
+      if (!g) return
+      // "opuszczanie" dźwigni
+      const target = on[idx] ? -1.15 : 0.15
+      g.rotation.x = THREE.MathUtils.damp(g.rotation.x, target, 10, dt)
+    })
+
+    useEffect(() => {
+      if (!vr || !hitRef.current) return
+      return vr.register(hitRef.current, () => press(idx))
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [vr, solvedAlready])
+
+    return (
+      <group position={local}>
+        {/* niewidzialny hitbox pod trigger/LPM */}
+        <mesh
+          ref={hitRef as any}
+          position={[0, 0.05, 0.05]}
+          onPointerDown={(e) => {
+            e.stopPropagation()
+            press(idx)
+          }}
+        >
+          <boxGeometry args={[0.55, 0.7, 0.35]} />
+          <meshStandardMaterial transparent opacity={0} />
+        </mesh>
+
+        {/* podstawa */}
+        <mesh position={[0, -0.15, 0]} castShadow>
+          <boxGeometry args={[0.35, 0.25, 0.12]} />
+          <meshStandardMaterial color={"#2b3038"} roughness={0.8} />
+        </mesh>
+
+        {/* rączka - animowana */}
+        <group ref={handleRef} position={[0, -0.02, 0.02]}>
+          <mesh position={[0, 0.22, 0]} castShadow>
+            <cylinderGeometry args={[0.035, 0.035, 0.55, 16]} />
+            <meshStandardMaterial color={on[idx] ? "#2bdc3a" : "#c9cbd1"} roughness={0.4} metalness={0.2} />
+          </mesh>
+          <mesh position={[0, 0.52, 0]} castShadow>
+            <boxGeometry args={[0.14, 0.08, 0.12]} />
+            <meshStandardMaterial color={on[idx] ? "#2bdc3a" : "#c9cbd1"} roughness={0.4} metalness={0.2} />
+          </mesh>
+        </group>
+
+        {/* numer */}
+        <Text position={[0, -0.42, 0.08]} fontSize={0.12} color="white" anchorX="center" anchorY="middle">
+          {idx + 1}
+        </Text>
+      </group>
+    )
+  }
+
+  // przeciwległa ściana do drzwi: drzwi są na Z-, więc puzzle dajemy na Z+
+  const zFront = ROOM.d / 2 - WALL_T / 2 - 0.06
 
   return (
-    <group position={[0, 1.5, wallInnerZ]}>
-      <Text position={[0, 0.55, 0.01]} fontSize={0.18} color={"#e6edf3"} anchorX="center" anchorY="middle">
-        Odtwórz sekwencję
+    <group position={[0, 1.35, zFront]} rotation={[0, Math.PI, 0]}>
+      <mesh position={[0, 0, -0.03]} receiveShadow>
+        <boxGeometry args={[2.4, 1.2, 0.06]} />
+        <meshStandardMaterial color={"#121417"} roughness={0.9} />
+      </mesh>
+
+      <Lever idx={0} local={[-0.7, 0, 0]} />
+      <Lever idx={1} local={[0, 0, 0]} />
+      <Lever idx={2} local={[0.7, 0, 0]} />
+
+      <Text position={[0, 0.62, 0.08]} fontSize={0.14} color="white" anchorX="center">
+        Kolejność: I → II → III
       </Text>
-
-      {baseX.map((x, i) => (
-        <LightDisc
-          key={"top-" + i}
-          color={COLORS[i]}
-          active={activeTop === i}
-          localPos={[x, topY, zCenter]}
-          interactive={false}
-        />
-      ))}
-
-      {baseX.map((x, i) => (
-        <LightDisc
-          key={"bottom-" + i}
-          color={activeBottom === i ? "#cfcfcf" : "#8a8a8a"}
-          active={activeBottom === i}
-          localPos={[x, bottomY, zCenter]}
-          interactive={true}
-          onPress={() => pressBottom(i)}
-          vr={vr}
-        />
-      ))}
     </group>
   )
 }
 
-// VR rejestracja dla LightDisc (dla interaktywnych)
-// (na końcu pliku, bo używa `press` z komponentu)
-// eslint-disable-next-line react-hooks/rules-of-hooks
-function useVRRegisterIfInteractive(vr: VRReg | undefined, ref: React.RefObject<THREE.Object3D>, interactive: boolean, handler: (e: any) => void) {
-  useEffect(() => {
-    if (!vr || !interactive || !ref.current) return
-    return vr.register(ref.current, (hit) => {
-      handler({ stopPropagation: () => {}, distance: hit.distance, object: hit.object })
-    })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [vr, interactive])
-}
-
-// ====== Drzwi przesuwne (północ) ======
 function SlidingDoor({ open }: { open: boolean }) {
   const plate = useRef<THREE.Mesh>(null)
   const doorW = 2.35
@@ -580,7 +508,7 @@ export default function Room1({
       <KeypadPuzzle solvedAlready={solved[1]} onSolved={() => onSolved(1)} vr={vr} />
 
       {/* 3. Sekwencja świateł: góra (display only) + dół (input) */}
-      <LightSequencePuzzle solvedAlready={solved[2]} onSolved={() => onSolved(2)} vr={vr} />
+      <LeverPuzzle solvedAlready={solved[2]} onSolved={() => onSolved(2)} vr={vr} />
 
       {!doorOpen && (
         <group position={[0, doorH + 0.35, zAtWall + 0.06]} rotation={[0, 0, 0]}>

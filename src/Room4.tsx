@@ -1,5 +1,6 @@
 import * as THREE from "three"
 import { useMemo } from "react"
+import { Text } from "@react-three/drei"
 
 export const ROOM = { w: 12, d: 12, h: 3.0 }
 export const WALL_T = 0.2
@@ -167,6 +168,15 @@ export default function Room4() {
       <Table position={[0, 0.8, 0]} />
       <Chair position={[0, 0.0, -0.85]} rotationY={0} />
       <CharacterSeated position={[0, 0.8, -0.85]} rotationY={0} />
+      <Text
+        position={[0, 1.9, -0.85]}
+        fontSize={0.6}
+        color="white"
+        anchorX="center"
+        anchorY="middle"
+      >
+        Gratulacje!
+      </Text>
       <pointLight position={[0, ROOM.h - 0.6, 0]} intensity={0.8} distance={8} color={"#b0a7ff"} />
     </group>
   )

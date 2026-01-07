@@ -127,6 +127,7 @@ function FuseBoxPuzzle({
   const boxInteractRef = useRef<THREE.Mesh>(null)
 
   const wp = useRef(new THREE.Vector3())
+  const camWorld = useRef(new THREE.Vector3())
   const wp2 = useRef(new THREE.Vector3())
   const forward = useRef(new THREE.Vector3())
   const carryWorld = useRef(new THREE.Vector3())
@@ -542,6 +543,7 @@ function GeneratorTimingPuzzle({
   const needleRef = useRef<THREE.Mesh>(null)
   const windowRef = useRef<THREE.Mesh>(null)
   const wp = useRef(new THREE.Vector3())
+  const camWorld = useRef(new THREE.Vector3())
 
   // 3 okna czasowe
   const windows = useMemo(() => {
@@ -607,7 +609,9 @@ function GeneratorTimingPuzzle({
     if (!vr || solvedAlready || !buttonRef.current) return
     return vr.register(buttonRef.current, (hit) => {
       // zachowujemy ten sam limit co onPointerDown
-      if (hit.distance > 2.2) return
+      camera.getWorldPosition(camWorld.current)
+      buttonRef.current!.getWorldPosition(wp.current)
+      if (wp.current.distanceTo(camWorld.current) > 2.2) return
       tryPress()
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -634,7 +638,8 @@ function GeneratorTimingPuzzle({
     if (consumeE()) {
       if (!buttonRef.current) return
       buttonRef.current.getWorldPosition(wp.current)
-      if (wp.current.distanceTo(camera.position) > 2.2) return
+      camera.getWorldPosition(camWorld.current)
+      if (wp.current.distanceTo(camWorld.current) > 2.2) return
       tryPress()
     }
   })
@@ -685,7 +690,8 @@ function GeneratorTimingPuzzle({
 
       <mesh
         ref={buttonRef}
-        position={[0, 0.35, 0.55]}
+        position={[0, 0.55, 0.55]}
+        rotation={[Math.PI / 2, 0, 0]}
         castShadow
         userData={{ collider: true }}
         onPointerDown={(e) => {
@@ -695,7 +701,7 @@ function GeneratorTimingPuzzle({
           tryPress()
         }}
       >
-        <cylinderGeometry args={[0.12, 0.12, 0.1, 20]} />
+        <cylinderGeometry args={[0.12, 0.12, 0.06, 20]} />
         <meshStandardMaterial
           color={stageUi === 3 ? "#15c915" : "#b0a7ff"}
           emissive={stageUi === 3 ? "#15c915" : "#2a1f55"}
